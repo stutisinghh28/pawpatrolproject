@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PawPatrol - Stray Animal Rescue & Coordination Platform</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS for Maps (Free OpenStreetMap, no API keys needed) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Site Header -->
+  <header class="site-header">
+    <div class="header-container">
+      <a href="#" class="brand" onclick="App.switchTab('report'); return false;">
+        <div class="brand-icon">🐾</div>
+        <div>
+          <div class="brand-title">Paw<span>Patrol</span></div>
+          <span class="brand-tagline">Stray Animal Rescue & Emergency Dispatch</span>
+        </div>
+      </a>
+
+      <!-- Navigation Tabs -->
+      <ul class="nav-tabs">
+        <li>
+          <button class="nav-tab-btn active" data-tab="report">
+            <span>🚨</span> Report Stray
+          </button>
+        </li>
+        <li>
+          <button class="nav-tab-btn" data-tab="dashboard">
+            <span>📊</span> Dashboard
+          </button>
+        </li>
+        <li>
+          <button class="nav-tab-btn" data-tab="map">
+            <span>🗺️</span> Map View
+          </button>
+        </li>
+        <li>
+          <button class="nav-tab-btn" data-tab="about">
+            <span>ℹ️</span> SOPs & Architecture
+          </button>
+        </li>
+      </ul>
+
+      <!-- Header Right: API Indicator -->
+      <div class="header-right">
+        <button id="api-status-pill" class="api-status-pill" title="Click to configure API endpoint">
+          <span id="api-status-dot" class="status-dot"></span>
+          <span id="api-status-text">Checking API...</span>
+          <span>⚙️</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="main-content">
+
+    <!-- Hero Banner -->
+    <section class="hero-banner">
+      <h1 class="hero-title">Every Second Counts for Strays in Need</h1>
+      <p class="hero-desc">
+        PawPatrol connects compassionate citizens with volunteer rescue squads. Submit incident reports with live GPS coordinates, photo evidence, and intelligent rule-based triage.
+      </p>
+      <div class="hero-badges">
+        <span class="hero-pill">⚡ Serverless AWS Python 3.14</span>
+        <span class="hero-pill">🛡️ Rule-Based Triage Matrix</span>
+        <span class="hero-pill">📍 Real-time Geo-Tagging</span>
+        <span class="hero-pill">🗄️ Amazon DynamoDB & S3</span>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         TAB 1: REPORT FORM
+         ==================================================================== -->
+    <section id="tab-report" class="tab-pane active">
+      <form id="report-form" autocomplete="off">
+        <div class="grid-2col">
+
+          <!-- Left Column: Primary Details -->
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title"><span>📋</span> Incident Report Form</h2>
+                <div class="card-subtitle">Fill in the details below. Our triage engine will calculate emergency priority automatically.</div>
+              </div>
+            </div>
+
+            <!-- Animal Profile -->
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="select-animal-type" class="form-label">
+                  Animal Type <span class="required">*</span>
+                </label>
+                <select id="select-animal-type" class="form-control" required>
+                  <option value="" disabled selected>Select animal...</option>
+                  <option value="Dog">🐕 Dog</option>
+                  <option value="Cat">🐈 Cat</option>
+                  <option value="Cattle">🐄 Cattle / Cow</option>
+                  <option value="Bird">🕊️ Bird</option>
+                  <option value="Other">🐾 Other Wild / Stray</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Estimated Life Stage</label>
+                <div class="pill-selector-group">
+                  <label class="pill-option">
+                    <input type="radio" name="animal_age" value="infant">
+                    <span class="pill-label">🍼 Puppy / Kitten</span>
+                  </label>
+                  <label class="pill-option">
+                    <input type="radio" name="animal_age" value="adult" checked>
+                    <span class="pill-label">🐕 Adult</span>
+                  </label>
+                  <label class="pill-option">
+                    <input type="radio" name="animal_age" value="senior">
+                    <span class="pill-label">🐾 Senior</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Primary Medical Condition -->
+            <div class="form-group">
+              <label for="select-condition" class="form-label">
+                Observed Physical Condition <span class="required">*</span>
+              </label>
+              <select id="select-condition" class="form-control" required>
+                <option value="CRITICAL_INJURY">🚨 Critical / Severe Bleeding / Hit by Vehicle / Unconscious</option>
+                <option value="MODERATE_INJURY">⚠️ Moderate Injury / Limping / Deep Wound / Sick</option>
+                <option value="SKIN_OR_SICK" selected>🩹 Severe Skin Disease / Mange / Malnutrition / Infection</option>
+                <option value="HEALTHY_STRAY">✅ Healthy Stray / Needs ABC (Sterilization) / Abandoned</option>
+              </select>
+            </div>
+
+            <!-- Specific Symptoms (Multi-select) -->
+            <div class="form-group">
+              <label class="form-label">Specific Observed Symptoms & Risk Factors</label>
+              <div class="symptom-grid">
+                <label class="symptom-item critical-symptom">
+                  <input type="checkbox" name="symptoms" value="unconscious">
+                  <span>Unconscious / Unresponsive</span>
+                </label>
+                <label class="symptom-item critical-symptom">
+                  <input type="checkbox" name="symptoms" value="bleeding_heavily">
+                  <span>Heavy Active Bleeding</span>
+                </label>
+                <label class="symptom-item critical-symptom">
+                  <input type="checkbox" name="symptoms" value="hit_by_vehicle">
+                  <span>Hit-and-Run / Vehicle Impact</span>
+                </label>
+                <label class="symptom-item high-symptom">
+                  <input type="checkbox" name="symptoms" value="broken_bone">
+                  <span>Fracture / Cannot Bear Weight</span>
+                </label>
+                <label class="symptom-item high-symptom">
+                  <input type="checkbox" name="symptoms" value="rabies_symptoms">
+                  <span>Aggressive / Foaming / Rabies Signs</span>
+                </label>
+                <label class="symptom-item medium-symptom">
+                  <input type="checkbox" name="symptoms" value="skin_mange" checked>
+                  <span>Severe Skin Mange / Hair Loss</span>
+                </label>
+                <label class="symptom-item medium-symptom">
+                  <input type="checkbox" name="symptoms" value="severe_malnutrition">
+                  <span>Extreme Malnutrition / Dehydration</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Trapped Hazard Checkbox -->
+            <div class="form-group">
+              <label class="symptom-item" style="border: 1px solid var(--border-color); background: #ffffff;">
+                <input type="checkbox" id="check-trapped">
+                <span style="font-weight: 600; color: #b91c1c;">⚠️ Animal is trapped in a hazardous environment (drain, open well, heavy traffic)</span>
+              </label>
+            </div>
+
+            <!-- Detailed Description -->
+            <div class="form-group">
+              <label for="input-description" class="form-label">
+                Situation Description & Details <span class="required">*</span>
+              </label>
+              <textarea id="input-description" class="form-control" rows="3" placeholder="Describe animal appearance, behavior, nearby landmarks, or special equipment needed..." required></textarea>
+            </div>
+
+            <!-- Reporter Contact (Optional) -->
+            <div class="form-row-2">
+              <div class="form-group">
+                <label for="input-reporter-name" class="form-label">Your Name (Optional)</label>
+                <input type="text" id="input-reporter-name" class="form-control" placeholder="e.g. Rahul Sharma">
+              </div>
+              <div class="form-group">
+                <label for="input-reporter-phone" class="form-label">Phone / WhatsApp (Optional)</label>
+                <input type="tel" id="input-reporter-phone" class="form-control" placeholder="e.g. +91 9876543210">
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Column: Location, Photo & Live Risk -->
+          <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+
+            <!-- Live Rule-Based Risk Box -->
+            <div id="risk-preview-box" class="risk-preview-box risk-medium">
+              <div class="risk-header-row">
+                <span class="risk-title">Triage Intelligence</span>
+                <span id="risk-badge" class="risk-level-badge medium">MEDIUM PRIORITY</span>
+              </div>
+              <p id="risk-explanation" class="risk-explanation">
+                <strong>Assessment Rationale:</strong> Skin condition or mild illness reported.
+              </p>
+              <div id="risk-sla" class="risk-sla">
+                Target Dispatch: Standard (&lt; 12 hours)
+              </div>
+            </div>
+
+            <!-- Location & Map Picker -->
+            <div class="card">
+              <div class="card-header" style="margin-bottom: 0.75rem;">
+                <h3 class="card-title" style="font-size: 1.05rem;"><span>📍</span> Location & Pin Drop</h3>
+                <button type="button" id="btn-get-gps" class="btn-gps">
+                  📍 Use My Current Location
+                </button>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0.5rem;">
+                <label for="input-address" class="form-label">Landmark / Street Address <span class="required">*</span></label>
+                <input type="text" id="input-address" class="form-control" placeholder="e.g. Outside Gate 4, Sector 15 Market" required>
+              </div>
+
+              <div class="form-row-2" style="margin-bottom: 0.5rem;">
+                <div>
+                  <label class="form-label" style="font-size: 0.75rem;">Latitude</label>
+                  <input type="text" id="input-lat" class="form-control" style="font-size: 0.8rem; padding: 0.35rem 0.5rem;" readonly>
+                </div>
+                <div>
+                  <label class="form-label" style="font-size: 0.75rem;">Longitude</label>
+                  <input type="text" id="input-lng" class="form-control" style="font-size: 0.8rem; padding: 0.35rem 0.5rem;" readonly>
+                </div>
+              </div>
+
+              <!-- Map container -->
+              <div id="picker-map" class="map-picker-container"></div>
+              <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem;">
+                💡 Drag the marker or click on the map to specify the exact location.
+              </p>
+            </div>
+
+            <!-- Photograph Upload Card -->
+            <div class="card">
+              <div class="card-header" style="margin-bottom: 0.75rem;">
+                <h3 class="card-title" style="font-size: 1.05rem;"><span>📸</span> Photo Evidence (Optional)</h3>
+              </div>
+
+              <input type="file" id="input-photo" accept="image/jpeg,image/png,image/webp" style="display: none;">
+
+              <div id="photo-dropzone" class="photo-dropzone">
+                <div style="font-size: 2rem; margin-bottom: 0.4rem;">📷</div>
+                <div style="font-weight: 600; font-size: 0.9rem;">Click or tap to attach animal photo</div>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;">Supports JPG, PNG, WEBP (Max 5MB)</div>
+              </div>
+
+              <div id="photo-preview-container" class="photo-preview-container">
+                <img id="photo-preview-img" class="photo-preview-img" src="" alt="Photo preview">
+                <button type="button" id="btn-remove-photo" class="photo-remove-btn" title="Remove photo">✕</button>
+              </div>
+            </div>
+
+            <!-- Submit Action -->
+            <button type="submit" id="btn-submit-report" class="btn btn-accent btn-block" style="font-size: 1.05rem; padding: 0.9rem;">
+              🚀 Submit Emergency Report
+            </button>
+
+          </div>
+
+        </div>
+      </form>
+    </section>
+
+    <!-- ====================================================================
+         TAB 2: RESCUE DASHBOARD
+         ==================================================================== -->
+    <section id="tab-dashboard" class="tab-pane">
+
+      <!-- KPI Statistics Row -->
+      <div class="kpi-row">
+        <div class="kpi-card kpi-total">
+          <div class="kpi-icon">📋</div>
+          <div>
+            <div id="kpi-total-val" class="kpi-value">0</div>
+            <div class="kpi-label">Total Reports Logged</div>
+          </div>
+        </div>
+
+        <div class="kpi-card kpi-critical">
+          <div class="kpi-icon">🚨</div>
+          <div>
+            <div id="kpi-critical-val" class="kpi-value">0</div>
+            <div class="kpi-label">Critical & High Urgency</div>
+          </div>
+        </div>
+
+        <div class="kpi-card kpi-progress">
+          <div class="kpi-icon">🚑</div>
+          <div>
+            <div id="kpi-progress-val" class="kpi-value">0</div>
+            <div class="kpi-label">In Progress / Dispatched</div>
+          </div>
+        </div>
+
+        <div class="kpi-card kpi-rescued">
+          <div class="kpi-icon">🎉</div>
+          <div>
+            <div id="kpi-rescued-val" class="kpi-value">0</div>
+            <div class="kpi-label">Rescued & Sheltered</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard Controls & Filters -->
+      <div class="dashboard-controls">
+        <div class="filter-group">
+          <input type="text" id="filter-search" class="search-input" placeholder="🔍 Search by ID, animal, or address...">
+          
+          <select id="filter-risk" class="select-filter">
+            <option value="ALL">All Urgencies</option>
+            <option value="CRITICAL">🚨 Critical</option>
+            <option value="HIGH">⚠️ High</option>
+            <option value="MEDIUM">🩹 Medium</option>
+            <option value="LOW">✅ Low</option>
+          </select>
+
+          <select id="filter-status" class="select-filter">
+            <option value="ALL">All Statuses</option>
+            <option value="REPORTED">Reported</option>
+            <option value="DISPATCHED">Dispatched</option>
+            <option value="IN_TREATMENT">In Treatment</option>
+            <option value="RESCUED">Rescued</option>
+            <option value="CLOSED">Closed</option>
+          </select>
+
+          <select id="filter-animal" class="select-filter">
+            <option value="ALL">All Animals</option>
+            <option value="Dog">Dogs</option>
+            <option value="Cat">Cats</option>
+            <option value="Cattle">Cattle</option>
+            <option value="Bird">Birds</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+
+        <div>
+          <button id="btn-refresh-dashboard" class="btn btn-outline btn-sm">
+            🔄 Refresh Feed
+          </button>
+        </div>
+      </div>
+
+      <!-- Reports Cards Grid -->
+      <div id="reports-container" class="reports-container">
+        <!-- Rendered dynamically by app.js -->
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         TAB 3: INTERACTIVE MAP VIEW
+         ==================================================================== -->
+    <section id="tab-map" class="tab-pane">
+      <div class="card" style="padding: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <div>
+            <h2 class="card-title" style="font-size: 1.15rem;"><span>🗺️</span> Live Rescue Geographic Map</h2>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">
+              Geographic distribution of reported cases. Pins are color-coded: <strong style="color:#ef4444;">Red=Critical</strong>, <strong style="color:#f97316;">Orange=High</strong>, <strong style="color:#eab308;">Yellow=Medium</strong>, <strong style="color:#10b981;">Green=Low</strong>.
+            </p>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="App.loadDashboardData(); MapModule.plotReports(App.cachedReports);">
+            🔄 Re-plot
+          </button>
+        </div>
+        <div id="dashboard-full-map" class="full-map-container"></div>
+      </div>
+    </section>
+
+    <!-- ====================================================================
+         TAB 4: ABOUT, SOPS & ARCHITECTURE
+         ==================================================================== -->
+    <section id="tab-about" class="tab-pane">
+      <div class="grid-2col">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title"><span>🏗️</span> System Architecture</h2>
+          </div>
+          <div style="font-size: 0.88rem; line-height: 1.6; color: #334155;">
+            <p><strong>PawPatrol</strong> is designed as a cloud-native, serverless architecture built on Amazon Web Services:</p>
+            <ul style="margin: 0.75rem 0 1rem 1.25rem;">
+              <li><strong>Frontend:</strong> Responsive Single-Page Application (HTML5, CSS3, Vanilla ES6+ JS) with Leaflet OpenStreetMap.</li>
+              <li><strong>Compute Layer:</strong> AWS Lambda running <strong>Python 3.14</strong> on <strong>x86_64</strong> architecture.</li>
+              <li><strong>Database Layer:</strong> Amazon DynamoDB (NoSQL) for high-speed sub-millisecond retrieval. Table: <code>PawPatrol-Reports</code>.</li>
+              <li><strong>Photo Storage:</strong> Amazon S3 with secure pre-signed PUT URLs. Zero public bucket risk!</li>
+              <li><strong>Emergency Broadcast:</strong> Amazon SNS (Simple Notification Service) for real-time volunteer SMS/email dispatches on Critical/High triage.</li>
+              <li><strong>Automated Follow-ups:</strong> Amazon EventBridge Scheduler for periodic verification of unresolved cases.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title"><span>⚖️</span> Triage Scoring Matrix</h2>
+          </div>
+          <div style="font-size: 0.85rem; line-height: 1.5; color: #334155;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.82rem;">
+              <thead>
+                <tr style="border-bottom: 2px solid var(--border-color); background: #f8fafc;">
+                  <th style="padding: 6px;">Priority</th>
+                  <th style="padding: 6px;">Score</th>
+                  <th style="padding: 6px;">Key Indicators</th>
+                  <th style="padding: 6px;">SLA</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                  <td style="padding: 6px; font-weight: bold; color: var(--risk-critical);">CRITICAL</td>
+                  <td style="padding: 6px;">&ge; 8</td>
+                  <td style="padding: 6px;">Unconscious, Heavy arterial bleeding, Hit by vehicle</td>
+                  <td style="padding: 6px;">&lt; 30 min</td>
+                </tr>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                  <td style="padding: 6px; font-weight: bold; color: var(--risk-high);">HIGH</td>
+                  <td style="padding: 6px;">5 - 7</td>
+                  <td style="padding: 6px;">Broken bone, Rabies symptoms, Severe trauma</td>
+                  <td style="padding: 6px;">&lt; 2 hrs</td>
+                </tr>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                  <td style="padding: 6px; font-weight: bold; color: var(--risk-medium);">MEDIUM</td>
+                  <td style="padding: 6px;">3 - 4</td>
+                  <td style="padding: 6px;">Severe mange, Trapped in ditch, Mild injury</td>
+                  <td style="padding: 6px;">&lt; 12 hrs</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px; font-weight: bold; color: var(--risk-low);">LOW</td>
+                  <td style="padding: 6px;">0 - 2</td>
+                  <td style="padding: 6px;">Healthy stray, ABC sterilization checkup</td>
+                  <td style="padding: 6px;">&lt; 48 hrs</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ====================================================================
+       MODALS
+       ==================================================================== -->
+
+  <!-- Modal 1: Report Success Modal -->
+  <div id="modal-success" class="modal-overlay">
+    <div class="modal-card" style="max-width: 450px; text-align: center;">
+      <div class="modal-body" style="padding: 2rem 1.5rem;">
+        <div style="font-size: 3.5rem; margin-bottom: 0.5rem;">🎉</div>
+        <h3 style="font-size: 1.35rem; font-weight: 800; color: #1e293b;">Report Logged Successfully!</h3>
+        <p id="modal-success-desc" style="font-size: 0.88rem; color: #64748b; margin-top: 0.4rem;"></p>
+        
+        <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1rem; margin: 1.25rem 0;">
+          <div style="font-size: 0.75rem; text-transform: uppercase; color: #94a3b8; font-weight: 700;">Tracking Identification</div>
+          <div id="modal-success-id" style="font-family: monospace; font-size: 1.25rem; font-weight: 800; color: #2563eb; margin: 0.25rem 0;"></div>
+          <div><span id="modal-success-risk" class="badge"></span></div>
+        </div>
+
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="btn btn-outline btn-block btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('modal-success-id').textContent); App.showToast('ID copied to clipboard!', 'info');">
+            📋 Copy ID
+          </button>
+          <button class="btn btn-primary btn-block btn-sm" onclick="document.getElementById('modal-success').classList.remove('open'); App.switchTab('dashboard');">
+            View on Dashboard
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 2: Report Details & Status Management Modal -->
+  <div id="modal-detail" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <div id="detail-id" style="font-size: 0.75rem; color: #64748b; font-family: monospace;"></div>
+          <h3 id="detail-title" class="modal-title"></h3>
+        </div>
+        <button class="modal-close">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div style="margin-bottom: 1rem;">
+          <span id="detail-risk-badge" class="badge"></span>
+        </div>
+
+        <img id="detail-photo" src="" alt="Animal" style="width: 100%; max-height: 240px; object-fit: cover; border-radius: 8px; margin-bottom: 1rem; display: none;">
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.85rem; margin-bottom: 1rem;">
+          <div><strong>📍 Address:</strong> <span id="detail-location"></span></div>
+          <div><strong>🌐 Coordinates:</strong> <span id="detail-coordinates"></span></div>
+          <div><strong>🩹 Condition:</strong> <span id="detail-condition"></span></div>
+          <div><strong>🩺 Symptoms:</strong> <span id="detail-symptoms"></span></div>
+          <div><strong>👤 Reporter:</strong> <span id="detail-reporter"></span></div>
+          <div><strong>🕒 Reported At:</strong> <span id="detail-created"></span></div>
+        </div>
+
+        <div style="margin-bottom: 1.25rem;">
+          <strong>📝 Description:</strong>
+          <p id="detail-description" style="margin-top: 0.25rem; font-size: 0.88rem; background: #f8fafc; padding: 0.75rem; border-radius: 6px; border: 1px solid #e2e8f0;"></p>
+        </div>
+
+        <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
+          <label for="detail-select-status" class="form-label">Update Case Status:</label>
+          <div style="display: flex; gap: 0.5rem;">
+            <select id="detail-select-status" class="form-control" style="flex: 1;">
+              <option value="REPORTED">REPORTED (New)</option>
+              <option value="DISPATCHED">DISPATCHED (Rescue team on the way)</option>
+              <option value="IN_TREATMENT">IN_TREATMENT (At veterinary clinic)</option>
+              <option value="RESCUED">RESCUED (Safely treated & sheltered)</option>
+              <option value="CLOSED">CLOSED (Case completed)</option>
+            </select>
+            <button id="btn-save-status" class="btn btn-primary btn-sm">Save Status</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm modal-cancel">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Settings & API Configuration Modal -->
+  <div id="modal-settings" class="modal-overlay">
+    <div class="modal-card" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 class="modal-title">⚙️ API Backend Configuration</h3>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.85rem; color: #475569; margin-bottom: 1rem;">
+          PawPatrol can communicate with your local Windows test server or directly with your deployed AWS Lambda Function URL / API Gateway endpoint.
+        </p>
+
+        <div class="form-group">
+          <label for="input-api-endpoint" class="form-label">AWS API Endpoint URL (Leave blank for local server):</label>
+          <input type="url" id="input-api-endpoint" class="form-control" placeholder="https://<id>.lambda-url.<region>.on.aws">
+          <div style="font-size: 0.75rem; color: #64748b; margin-top: 0.4rem;">
+            Example: <code>https://x1y2z3.lambda-url.ap-south-1.on.aws</code>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm modal-cancel">Cancel</button>
+        <button id="btn-save-api-url" class="btn btn-primary btn-sm">Save & Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Site Footer -->
+  <footer class="site-footer">
+    <div><strong>PawPatrol</strong> &copy; 2026 • Stray Animal Rescue and Triage Coordination</div>
+    <div style="margin-top: 0.35rem; font-size: 0.75rem;">
+      Built with AWS Serverless (Lambda Python 3.14 x86_64, DynamoDB, S3, SNS) & Leaflet OpenStreetMap
+    </div>
+  </footer>
+
+  <!-- Leaflet JS for Maps -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <!-- Application JS Scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
