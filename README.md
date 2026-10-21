@@ -86,31 +86,6 @@ PawPatrol/
 
 ---
 
-## 4. Local Quickstart (Windows & PowerShell)
-
-You do **not** need an AWS account or internet credentials to run and demo the full system locally!
-
-### Step 1: Open PowerShell and Navigate to the Project
-```powershell
-cd C:\Users\stuti\.gemini\antigravity\scratch\PawPatrol
-```
-
-### Step 2: Run Automated Unit Tests
-```powershell
-python backend\test_backend.py
-```
-*Expected output: `Ran 6 tests in 0.000s ... OK`*
-
-### Step 3: Launch Local Test Server
-```powershell
-python backend\local_server.py
-```
-*This starts a dual-purpose server on port 8000:*
-- Serves the frontend at: `http://localhost:8000/`
-- Serves the REST API at: `http://localhost:8000/api/reports`
-- Stores reports locally in `data/local_reports.json`
-
----
 
 ## 5. API Reference
 
