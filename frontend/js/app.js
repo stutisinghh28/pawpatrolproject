@@ -1,6 +1,7 @@
 /**
  * PawPatrol - Main Application Logic
- * Implements rule-based risk classification, form handling, dashboard UI, and API integration.
+ * Implements rule-based risk classification, AI photo analysis integration,
+ * form handling, dashboard UI, and API integration.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -12,6 +13,7 @@ const App = {
   cachedReports: [],
   selectedPhotoFile: null,
   selectedPhotoBase64: null,
+  currentAiAnalysis: null,
 
   init() {
     this.bindNavigation();
@@ -211,7 +213,7 @@ const App = {
       });
     }
 
-    // Photo Upload & Preview
+    // Photo Upload, Preview & AI Trigger
     const photoInput = document.getElementById('input-photo');
     const dropzone = document.getElementById('photo-dropzone');
     const previewContainer = document.getElementById('photo-preview-container');
@@ -221,22 +223,34 @@ const App = {
     if (dropzone && photoInput) {
       dropzone.addEventListener('click', () => photoInput.click());
 
-      photoInput.addEventListener('change', (e) => {
+      photoInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
+        // Validation
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!validTypes.includes(file.type)) {
+          this.showToast('Unsupported format. Please upload JPG, PNG, or WEBP.', 'error');
+          photoInput.value = '';
+          return;
+        }
+
         if (file.size > 5 * 1024 * 1024) {
           this.showToast('Photo must be less than 5MB', 'error');
+          photoInput.value = '';
           return;
         }
 
         this.selectedPhotoFile = file;
         const reader = new FileReader();
-        reader.onload = (ev) => {
+        reader.onload = async (ev) => {
           this.selectedPhotoBase64 = ev.target.result;
           previewImg.src = ev.target.result;
           previewContainer.style.display = 'block';
           dropzone.style.display = 'none';
+
+          // Trigger AI Photo Analysis
+          await this.runAiPhotoAnalysis(this.selectedPhotoBase64);
         };
         reader.readAsDataURL(file);
       });
@@ -245,9 +259,13 @@ const App = {
         e.stopPropagation();
         this.selectedPhotoFile = null;
         this.selectedPhotoBase64 = null;
+        this.currentAiAnalysis = null;
         photoInput.value = '';
         previewContainer.style.display = 'none';
         dropzone.style.display = 'block';
+
+        const aiCard = document.getElementById('ai-analysis-card');
+        if (aiCard) aiCard.style.display = 'none';
       });
     }
 
@@ -255,6 +273,81 @@ const App = {
     const form = document.getElementById('report-form');
     if (form) {
       form.addEventListener('submit', (e) => this.handleFormSubmit(e));
+    }
+  },
+
+  // ------------------------------------------------------------------------
+  // AI Photo Analysis Integration
+  // ------------------------------------------------------------------------
+  async runAiPhotoAnalysis(base64Image) {
+    const aiCard = document.getElementById('ai-analysis-card');
+    const loadingState = document.getElementById('ai-loading-state');
+    const resultsState = document.getElementById('ai-results-state');
+    const modelBadge = document.getElementById('ai-model-badge');
+
+    if (!aiCard) return;
+
+    aiCard.style.display = 'block';
+    loadingState.style.display = 'block';
+    resultsState.style.display = 'none';
+    modelBadge.textContent = 'Analyzing...';
+
+    try {
+      const analysis = await API.analyzePhoto(base64Image);
+      this.currentAiAnalysis = analysis;
+
+      modelBadge.textContent = analysis.model_name || 'Vision AI';
+
+      const speciesEl = document.getElementById('ai-species-text');
+      const confEl = document.getElementById('ai-confidence-text');
+      const tagsContainer = document.getElementById('ai-tags-container');
+      const mismatchBanner = document.getElementById('ai-species-mismatch-banner');
+      const uncertaintyNotice = document.getElementById('ai-uncertainty-notice');
+
+      const identifiedSpecies = analysis.identified_species || 'Animal Detected';
+      speciesEl.textContent = identifiedSpecies;
+      confEl.textContent = analysis.species_confidence ? `${analysis.species_confidence}%` : 'N/A';
+
+      // Visual tags
+      tagsContainer.innerHTML = (analysis.detected_labels || []).slice(0, 8).map(l => {
+        return `<span class="ai-tag-pill">${this.escapeHtml(l.label)} (${l.confidence}%)</span>`;
+      }).join('');
+
+      // Species Mismatch check
+      const selectedType = document.getElementById('select-animal-type').value;
+      if (analysis.identified_species && selectedType && analysis.identified_species.toLowerCase() !== selectedType.toLowerCase() && analysis.species_confidence >= 75) {
+        document.getElementById('ai-detected-species-name').textContent = analysis.identified_species;
+        document.getElementById('ai-selected-species-name').textContent = selectedType;
+        mismatchBanner.style.display = 'block';
+
+        const applyBtn = document.getElementById('btn-apply-ai-species');
+        applyBtn.onclick = () => {
+          document.getElementById('select-animal-type').value = analysis.identified_species;
+          mismatchBanner.style.display = 'none';
+          this.showToast(`Updated animal type to ${analysis.identified_species}`, 'info');
+        };
+      } else {
+        mismatchBanner.style.display = 'none';
+      }
+
+      // Uncertainty
+      if (analysis.uncertainty_flag) {
+        uncertaintyNotice.style.display = 'block';
+      } else {
+        uncertaintyNotice.style.display = 'none';
+      }
+
+      loadingState.style.display = 'none';
+      resultsState.style.display = 'block';
+    } catch (err) {
+      console.warn('AI Analysis failed:', err);
+      loadingState.innerHTML = `
+        <div style="font-size: 0.82rem; color: #b91c1c;">
+          ⚠️ AI Analysis note: ${this.escapeHtml(err.message)}
+          <br><span style="color: #64748b; font-size: 0.75rem;">You may still proceed with submitting your manual report.</span>
+        </div>
+      `;
+      modelBadge.textContent = 'Fallback';
     }
   },
 
@@ -313,8 +406,9 @@ const App = {
       risk_level: assessment.riskLevel,
       risk_score: assessment.score,
       risk_reasons: assessment.reasons,
-      photo_data: this.selectedPhotoBase64 || null,
+      photo_s3_key: null,
       photo_url: null,
+      ai_analysis: this.currentAiAnalysis,
       status: 'REPORTED'
     };
 
@@ -322,24 +416,19 @@ const App = {
       submitBtn.disabled = true;
       submitBtn.innerHTML = '<span class="spinner"></span> Dispatching Report...';
 
-      // If photo was chosen and we have AWS S3 Pre-signed URL capability
-      if (this.selectedPhotoFile && API.getBaseUrl()) {
+      // 1. Upload Photo if selected (S3 Presigned PUT or Local Disk - NO BASE64 IN DATABASE)
+      if (this.selectedPhotoFile) {
+        submitBtn.innerHTML = '<span class="spinner"></span> Uploading photo securely...';
         try {
-          const presigned = await API.getUploadUrl(this.selectedPhotoFile.name, this.selectedPhotoFile.type);
-          if (presigned && presigned.upload_url) {
-            await fetch(presigned.upload_url, {
-              method: 'PUT',
-              headers: { 'Content-Type': this.selectedPhotoFile.type },
-              body: this.selectedPhotoFile
-            });
-            reportPayload.photo_url = presigned.photo_url;
-            reportPayload.photo_data = null; // Do not need inline base64 if hosted on S3
-          }
-        } catch (s3Err) {
-          console.warn('S3 upload fallback to base64 payload:', s3Err);
+          const uploadRes = await API.uploadPhoto(this.selectedPhotoFile, this.selectedPhotoBase64);
+          reportPayload.photo_s3_key = uploadRes.photo_s3_key || null;
+          reportPayload.photo_url = uploadRes.photo_url || null;
+        } catch (uploadErr) {
+          throw new Error(`Photo upload failed: ${uploadErr.message}`);
         }
       }
 
+      submitBtn.innerHTML = '<span class="spinner"></span> Persisting rescue report...';
       const result = await API.createReport(reportPayload);
 
       if (result && (result.success || result.report_id || result.report)) {
@@ -362,10 +451,13 @@ const App = {
     document.getElementById('report-form').reset();
     this.selectedPhotoFile = null;
     this.selectedPhotoBase64 = null;
+    this.currentAiAnalysis = null;
     const previewContainer = document.getElementById('photo-preview-container');
     const dropzone = document.getElementById('photo-dropzone');
+    const aiCard = document.getElementById('ai-analysis-card');
     if (previewContainer) previewContainer.style.display = 'none';
     if (dropzone) dropzone.style.display = 'block';
+    if (aiCard) aiCard.style.display = 'none';
     this.calculateRiskLevel();
   },
 
@@ -374,12 +466,26 @@ const App = {
     const idEl = document.getElementById('modal-success-id');
     const riskEl = document.getElementById('modal-success-risk');
     const descEl = document.getElementById('modal-success-desc');
+    const storageEl = document.getElementById('modal-success-storage');
 
     const reportId = report.report_id || 'PAW-TRACKED';
     idEl.textContent = reportId;
     riskEl.textContent = `${report.risk_level} Priority`;
-    riskEl.className = `badge badge-${report.risk_level.toLowerCase()}`;
+    riskEl.className = `badge badge-${(report.risk_level || 'LOW').toLowerCase()}`;
     descEl.textContent = `Report for ${report.animal_type} at ${report.location_address} has been logged and dispatched.`;
+
+    if (storageEl) {
+      if (report.storage_tier === 'AWS_DYNAMODB' || report.storage_tier === 'AWS_CLOUD') {
+        storageEl.className = 'storage-badge storage-cloud';
+        storageEl.textContent = '☁️ AWS DynamoDB';
+      } else if (report.storage_tier === 'LOCAL_OFFLINE_CACHE' || report.offline) {
+        storageEl.className = 'storage-badge storage-offline';
+        storageEl.textContent = '💾 Local Offline Draft';
+      } else {
+        storageEl.className = 'storage-badge storage-local';
+        storageEl.textContent = '🖥️ Local Dev Server';
+      }
+    }
 
     modal.classList.add('open');
   },
@@ -417,7 +523,7 @@ const App = {
       this.updateKpiCounters(reports);
       this.applyDashboardFilters();
     } catch (err) {
-      container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 2rem; color: #ef4444;">Failed to load reports: ${err.message}</div>`;
+      container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 2rem; color: #ef4444;">Failed to load reports: ${this.escapeHtml(err.message)}</div>`;
     }
   },
 
@@ -476,8 +582,16 @@ const App = {
 
     container.innerHTML = reports.map(rep => {
       const riskClass = `badge-${(rep.risk_level || 'LOW').toLowerCase()}`;
-      const photoSrc = rep.photo_url || rep.photo_data;
+      const photoSrc = rep.photo_url;
       const relativeTime = this.formatRelativeTime(rep.created_at);
+
+      // AI Badge
+      let aiBadge = '';
+      if (rep.ai_analysis) {
+        const species = rep.ai_analysis.identified_species || 'Analyzed';
+        const conf = rep.ai_analysis.species_confidence ? ` (${rep.ai_analysis.species_confidence}%)` : '';
+        aiBadge = `<span class="ai-tag-pill" style="margin-left: 4px;">🤖 ${species}${conf}</span>`;
+      }
 
       return `
         <div class="report-card">
@@ -494,7 +608,7 @@ const App = {
             </div>
           </div>
           <div class="report-card-body">
-            <div class="report-id">${rep.report_id || 'ID Pending'}</div>
+            <div class="report-id">${rep.report_id || 'ID Pending'} ${aiBadge}</div>
             <div class="report-title">${rep.animal_type} Rescue</div>
             <div class="report-location">
               📍 <span>${this.escapeHtml(rep.location_address || 'Address provided')}</span>
@@ -526,16 +640,52 @@ const App = {
     riskBadge.textContent = `${rep.risk_level} Priority (Score: ${rep.risk_score || 0})`;
     riskBadge.className = `badge badge-${(rep.risk_level || 'LOW').toLowerCase()}`;
 
+    const storageBadge = document.getElementById('detail-storage-badge');
+    if (storageBadge) {
+      if (rep.storage_tier === 'AWS_DYNAMODB' || rep.storage_tier === 'AWS_CLOUD') {
+        storageBadge.className = 'storage-badge storage-cloud';
+        storageBadge.textContent = '☁️ AWS DynamoDB';
+      } else if (rep.storage_tier === 'LOCAL_OFFLINE_CACHE' || rep.offline) {
+        storageBadge.className = 'storage-badge storage-offline';
+        storageBadge.textContent = '💾 Local Offline Draft';
+      } else {
+        storageBadge.className = 'storage-badge storage-local';
+        storageBadge.textContent = '🖥️ Local Dev Server';
+      }
+    }
+
+    // AI Details
+    const aiContainer = document.getElementById('detail-ai-container');
+    const aiModelEl = document.getElementById('detail-ai-model');
+    const aiContentEl = document.getElementById('detail-ai-content');
+
+    if (rep.ai_analysis && aiContainer) {
+      aiContainer.style.display = 'block';
+      aiModelEl.textContent = rep.ai_analysis.model_name || 'Vision AI';
+      
+      const species = rep.ai_analysis.identified_species || 'N/A';
+      const conf = rep.ai_analysis.species_confidence ? `${rep.ai_analysis.species_confidence}%` : 'N/A';
+      const labels = (rep.ai_analysis.detected_labels || []).map(l => `${l.label} (${l.confidence}%)`).join(', ');
+
+      aiContentEl.innerHTML = `
+        <div><strong>Identified Species:</strong> ${this.escapeHtml(species)} (Confidence: ${conf})</div>
+        <div style="margin-top: 3px;"><strong>Visual Tags:</strong> ${this.escapeHtml(labels || 'None')}</div>
+        <div style="margin-top: 3px; font-size: 0.75rem; color: #64748b; font-style: italic;">${this.escapeHtml(rep.ai_analysis.clinical_disclaimer || '')}</div>
+      `;
+    } else if (aiContainer) {
+      aiContainer.style.display = 'none';
+    }
+
     document.getElementById('detail-location').textContent = rep.location_address || 'N/A';
     document.getElementById('detail-coordinates').textContent = (rep.latitude && rep.longitude) ? `${rep.latitude}, ${rep.longitude}` : 'No GPS coordinates';
     document.getElementById('detail-condition').textContent = rep.condition || 'N/A';
     document.getElementById('detail-symptoms').textContent = (rep.symptoms && rep.symptoms.length > 0) ? rep.symptoms.join(', ') : 'None specified';
     document.getElementById('detail-description').textContent = rep.description || 'N/A';
-    document.getElementById('detail-reporter').textContent = `${rep.reporter_name || 'Anonymous'} (${rep.reporter_phone || 'No phone'})`;
+    document.getElementById('detail-reporter').textContent = `${rep.reporter_name || 'Anonymous'} (${rep.reporter_phone_masked || rep.reporter_phone || 'No phone'})`;
     document.getElementById('detail-created').textContent = new Date(rep.created_at).toLocaleString();
 
     const photoEl = document.getElementById('detail-photo');
-    const photoSrc = rep.photo_url || rep.photo_data;
+    const photoSrc = rep.photo_url;
     if (photoSrc) {
       photoEl.src = photoSrc;
       photoEl.style.display = 'block';
@@ -573,7 +723,7 @@ const App = {
   },
 
   // ------------------------------------------------------------------------
-  // Settings & API Configuration Modal
+  // Settings & Storage Configuration Modal
   // ------------------------------------------------------------------------
   bindSettingsModal() {
     const pill = document.getElementById('api-status-pill');
@@ -581,12 +731,37 @@ const App = {
     const closeBtns = document.querySelectorAll('.modal-close, .modal-cancel');
     const saveBtn = document.getElementById('btn-save-api-url');
     const urlInput = document.getElementById('input-api-endpoint');
+    const radioCloud = document.getElementById('radio-mode-cloud');
+    const radioLocal = document.getElementById('radio-mode-local');
+    const radioOffline = document.getElementById('radio-mode-offline');
+    const endpointGroup = document.getElementById('group-api-endpoint');
 
     if (pill) {
       pill.addEventListener('click', () => {
+        const mode = API.getStorageMode();
+        if (mode === 'AWS_CLOUD') {
+          if (radioCloud) radioCloud.checked = true;
+          if (endpointGroup) endpointGroup.style.display = 'block';
+        } else if (mode === 'OFFLINE_LOCAL') {
+          if (radioOffline) radioOffline.checked = true;
+          if (endpointGroup) endpointGroup.style.display = 'none';
+        } else {
+          if (radioLocal) radioLocal.checked = true;
+          if (endpointGroup) endpointGroup.style.display = 'none';
+        }
         urlInput.value = API.getBaseUrl();
         modal.classList.add('open');
       });
+    }
+
+    if (radioCloud) {
+      radioCloud.addEventListener('change', () => { if (endpointGroup) endpointGroup.style.display = 'block'; });
+    }
+    if (radioLocal) {
+      radioLocal.addEventListener('change', () => { if (endpointGroup) endpointGroup.style.display = 'none'; });
+    }
+    if (radioOffline) {
+      radioOffline.addEventListener('change', () => { if (endpointGroup) endpointGroup.style.display = 'none'; });
     }
 
     closeBtns.forEach(b => {
@@ -597,10 +772,26 @@ const App = {
 
     if (saveBtn) {
       saveBtn.addEventListener('click', async () => {
-        const newUrl = urlInput.value.trim();
-        API.setBaseUrl(newUrl);
+        const selectedRadio = document.querySelector('input[name="conn_mode"]:checked')?.value || 'local';
+
+        if (selectedRadio === 'cloud') {
+          const newUrl = urlInput.value.trim();
+          if (!newUrl) {
+            this.showToast('Please enter your AWS Lambda Function URL for Cloud mode.', 'error');
+            return;
+          }
+          API.setBaseUrl(newUrl);
+          API.setOfflineMode(false);
+        } else if (selectedRadio === 'offline') {
+          API.setBaseUrl('');
+          API.setOfflineMode(true);
+        } else {
+          API.setBaseUrl('');
+          API.setOfflineMode(false);
+        }
+
         modal.classList.remove('open');
-        this.showToast('API Endpoint updated', 'info');
+        this.showToast('Configuration updated', 'info');
         await this.checkApiStatus();
         this.loadDashboardData();
       });
@@ -614,6 +805,13 @@ const App = {
 
     if (!pill) return;
 
+    if (API.isOfflineMode()) {
+      dot.className = 'status-dot';
+      dot.style.backgroundColor = '#eab308';
+      text.textContent = 'Offline Demo Mode';
+      return;
+    }
+
     const isConnected = await API.ping();
     const isCloud = API.getBaseUrl().includes('amazonaws.com');
 
@@ -622,7 +820,7 @@ const App = {
       text.textContent = isCloud ? 'AWS Cloud Connected' : 'Local Server Active';
     } else {
       dot.className = 'status-dot offline';
-      text.textContent = API.getBaseUrl() ? 'Cloud Offline (Using Cache)' : 'Local Mode';
+      text.textContent = isCloud ? 'Cloud Server Offline' : 'Local Server Offline';
     }
   },
 

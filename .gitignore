@@ -43,5 +43,7 @@ desktop.ini
 
 # Local Data / Testing
 data/local_reports.json
+data/uploads/*
+!data/uploads/.gitkeep
 backend/package/
 *.zip

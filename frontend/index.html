@@ -277,6 +277,65 @@
                 <img id="photo-preview-img" class="photo-preview-img" src="" alt="Photo preview">
                 <button type="button" id="btn-remove-photo" class="photo-remove-btn" title="Remove photo">✕</button>
               </div>
+
+              <!-- Interactive AI Photo Assistant Card -->
+              <div id="ai-analysis-card" class="ai-analysis-card" style="display: none; margin-top: 1rem;">
+                <div class="ai-card-header">
+                  <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.15rem;">🤖</span>
+                    <strong style="font-size: 0.88rem; color: #0f172a;">AI Vision Assistant</strong>
+                  </div>
+                  <span id="ai-model-badge" class="ai-model-badge">Analyzing...</span>
+                </div>
+                <div id="ai-analysis-body">
+                  <div id="ai-loading-state" style="text-align: center; padding: 1rem;">
+                    <span class="spinner" style="border-color: #2563eb; border-top-color: transparent;"></span>
+                    <div style="font-size: 0.8rem; color: #64748b; margin-top: 0.4rem;">Analyzing animal image with computer vision...</div>
+                  </div>
+                  <div id="ai-results-state" style="display: none;">
+                    <div class="ai-species-row">
+                      <div>
+                        <span style="font-size: 0.72rem; text-transform: uppercase; color: #64748b; font-weight: 700;">Identified Species</span>
+                        <div id="ai-species-text" style="font-size: 1.05rem; font-weight: 800; color: #1e293b;">Dog</div>
+                      </div>
+                      <div style="text-align: right;">
+                        <span style="font-size: 0.72rem; text-transform: uppercase; color: #64748b; font-weight: 700;">Model Confidence</span>
+                        <div id="ai-confidence-text" style="font-size: 1.05rem; font-weight: 800; color: #2563eb;">96.4%</div>
+                      </div>
+                    </div>
+                    
+                    <!-- Species Mismatch Alert -->
+                    <div id="ai-species-mismatch-banner" class="ai-mismatch-banner" style="display: none;">
+                      ⚠️ <span>AI identified this as a <strong id="ai-detected-species-name">Dog</strong>, but you selected <strong id="ai-selected-species-name">Cat</strong>.</span>
+                      <button type="button" id="btn-apply-ai-species" class="btn btn-sm btn-outline" style="margin-top: 0.4rem; width: 100%; background: #ffffff;">
+                        🔄 Update Selection to Suggested Species
+                      </button>
+                    </div>
+
+                    <!-- Visual Tags -->
+                    <div style="margin-top: 0.6rem;">
+                      <span style="font-size: 0.75rem; color: #64748b; font-weight: 600;">Detected Visual Attributes:</span>
+                      <div id="ai-tags-container" class="ai-tags-container"></div>
+                    </div>
+
+                    <!-- Uncertainty Notice -->
+                    <div id="ai-uncertainty-notice" class="ai-uncertainty-notice" style="display: none;">
+                      ⚠️ High visual uncertainty detected. Please manually confirm animal species and symptoms.
+                    </div>
+
+                    <!-- Clinical Disclaimer -->
+                    <div class="ai-disclaimer">
+                      ℹ️ Observational assistant only. Does not perform clinical veterinary diagnosis.
+                    </div>
+
+                    <!-- Human verification checkbox -->
+                    <label class="symptom-item" style="margin-top: 0.75rem; background: #ffffff; border: 1px solid #cbd5e1;">
+                      <input type="checkbox" id="check-ai-reviewed" checked>
+                      <span style="font-size: 0.78rem; font-weight: 600;">I have reviewed the photo and verified the observed condition.</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Submit Action -->
@@ -480,7 +539,10 @@
         <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 1rem; margin: 1.25rem 0;">
           <div style="font-size: 0.75rem; text-transform: uppercase; color: #94a3b8; font-weight: 700;">Tracking Identification</div>
           <div id="modal-success-id" style="font-family: monospace; font-size: 1.25rem; font-weight: 800; color: #2563eb; margin: 0.25rem 0;"></div>
-          <div><span id="modal-success-risk" class="badge"></span></div>
+          <div style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 0.4rem;">
+            <span id="modal-success-risk" class="badge"></span>
+            <span id="modal-success-storage" class="storage-badge storage-cloud">AWS DynamoDB</span>
+          </div>
         </div>
 
         <div style="display: flex; gap: 0.5rem;">
@@ -507,11 +569,21 @@
       </div>
 
       <div class="modal-body">
-        <div style="margin-bottom: 1rem;">
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
           <span id="detail-risk-badge" class="badge"></span>
+          <span id="detail-storage-badge" class="storage-badge storage-cloud"></span>
         </div>
 
         <img id="detail-photo" src="" alt="Animal" style="width: 100%; max-height: 240px; object-fit: cover; border-radius: 8px; margin-bottom: 1rem; display: none;">
+
+        <!-- AI Analysis Details Block -->
+        <div id="detail-ai-container" style="margin-bottom: 1rem; padding: 0.85rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+            <strong style="font-size: 0.85rem; color: #1e293b;">🤖 AI Vision Observation</strong>
+            <span id="detail-ai-model" class="ai-model-badge"></span>
+          </div>
+          <div id="detail-ai-content" style="font-size: 0.82rem; color: #475569; line-height: 1.5;"></div>
+        </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.85rem; margin-bottom: 1rem;">
           <div><strong>📍 Address:</strong> <span id="detail-location"></span></div>
@@ -552,16 +624,34 @@
   <div id="modal-settings" class="modal-overlay">
     <div class="modal-card" style="max-width: 500px;">
       <div class="modal-header">
-        <h3 class="modal-title">⚙️ API Backend Configuration</h3>
+        <h3 class="modal-title">⚙️ Backend & Storage Configuration</h3>
         <button class="modal-close">&times;</button>
       </div>
       <div class="modal-body">
         <p style="font-size: 0.85rem; color: #475569; margin-bottom: 1rem;">
-          PawPatrol can communicate with your local Windows test server or directly with your deployed AWS Lambda Function URL / API Gateway endpoint.
+          Choose how PawPatrol connects to your backend services:
         </p>
 
         <div class="form-group">
-          <label for="input-api-endpoint" class="form-label">AWS API Endpoint URL (Leave blank for local server):</label>
+          <label class="form-label">Connection Mode:</label>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.85rem;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="radio" name="conn_mode" value="cloud" id="radio-mode-cloud">
+              <span><strong>AWS Cloud Mode</strong> (Direct to deployed AWS Lambda Function URL)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="radio" name="conn_mode" value="local" id="radio-mode-local">
+              <span><strong>Local Development Server</strong> (http://localhost:8000)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="radio" name="conn_mode" value="offline" id="radio-mode-offline">
+              <span><strong>Offline Browser Demo Mode</strong> (Explicit LocalStorage drafts)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group" id="group-api-endpoint">
+          <label for="input-api-endpoint" class="form-label">AWS Lambda Function URL:</label>
           <input type="url" id="input-api-endpoint" class="form-control" placeholder="https://<id>.lambda-url.<region>.on.aws">
           <div style="font-size: 0.75rem; color: #64748b; margin-top: 0.4rem;">
             Example: <code>https://x1y2z3.lambda-url.ap-south-1.on.aws</code>

@@ -39,6 +39,15 @@
         "sns:Publish"
       ],
       "Resource": "arn:aws:sns:*:*:PawPatrol-Alerts"
+    },
+    {
+      "Sid": "RekognitionPhotoAI",
+      "Effect": "Allow",
+      "Action": [
+        "rekognition:DetectLabels",
+        "rekognition:DetectCustomLabels"
+      ],
+      "Resource": "*"
     }
   ]
 }

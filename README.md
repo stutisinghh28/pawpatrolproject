@@ -2,7 +2,7 @@
 
 **PawPatrol** is a full-stack, cloud-native stray animal rescue reporting and emergency coordination web application built for college engineering capstone presentation.
 
-It provides citizens with an instant, geo-enabled reporting portal that automatically scores and classifies animal medical emergencies into triage risk tiers (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), dispatches real-time alerts to animal shelters and volunteer squads, and persists all incident records in Amazon DynamoDB.
+It provides citizens with an instant, geo-enabled reporting portal that uses real computer vision to analyze animal photographs, automatically scores medical emergencies into rule-based triage risk tiers (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`), dispatches real-time alerts via Amazon SNS, and persists all incident records in Amazon DynamoDB with private image storage in Amazon S3.
 
 ---
 
@@ -14,50 +14,69 @@ flowchart TD
         UI["Web UI (HTML5 / CSS3 / Vanilla JS)"]
         Leaflet["Leaflet OpenStreetMap (GPS Geotagging)"]
         LiveRisk["Live Rule-Based Risk Engine"]
+        AIAssist["AI Vision Review & Human Confirmation Card"]
     end
 
     subgraph AWS["AWS Serverless Cloud (Region: ap-south-1)"]
         FuncURL["Lambda Function URL (HTTPS Endpoint + CORS)"]
         Lambda["AWS Lambda Handler (Python 3.14 x86_64)"]
+        Rekognition["Amazon Rekognition (Computer Vision AI)"]
         DDB[("Amazon DynamoDB (PawPatrol-Reports Table)")]
         S3[("Amazon S3 Bucket (Private Photos via Pre-signed URLs)")]
         SNS["Amazon SNS (PawPatrol-Alerts Topic)"]
     end
 
-    subgraph Responders["Volunteer & Clinic Notification"]
-        Email["Email / SMS Emergency Alerts"]
+    subgraph Responders["Emergency Responders"]
+        Email["Email / SMS Real-time Dispatches"]
     end
 
-    UI -->|1. Submit Report with Geotag & Photo| FuncURL
+    UI -->|1. Analyze Photo Bytes| FuncURL
     FuncURL --> Lambda
-    Lambda -->|2. Authoritative Triage Calculation| Lambda
-    Lambda -->|3. Persist Report Data| DDB
-    Lambda -->|4. If Urgent: Publish Dispatch Alert| SNS
+    Lambda -->|2. Species & Visual Detection| Rekognition
+    Rekognition -->|3. Labels, Confidence, Uncertainty| Lambda
+    Lambda -->|4. Return AI Observation to User| UI
+    UI -->|5. User Confirms/Corrects & Submits| FuncURL
+    FuncURL --> Lambda
+    Lambda -->|6. Request S3 Presigned PUT URL| S3
+    UI -->|7. Upload Photo Directly to S3| S3
+    Lambda -->|8. Authoritative Triage (AI never downgrades)| Lambda
+    Lambda -->|9. Persist Report Data & AI Metadata (No base64)| DDB
+    Lambda -->|10. If Urgent: Publish Dispatch Alert| SNS
     SNS --> Email
-    UI -->|5. Request S3 Pre-signed PUT URL| Lambda
-    Lambda -->|6. Return Short-Lived Upload URL| UI
-    UI -->|7. Upload Image Directly to S3| S3
-    UI -->|8. Fetch & Filter Reports Feed| FuncURL
-    FuncURL --> Lambda
-    Lambda -->|9. Scan / Query Reports| DDB
 ```
 
 ---
 
-## 2. Rule-Based Triage & Risk Classification
+## 2. Computer Vision AI & Triage Safeguards
 
-PawPatrol features an intelligent, deterministic scoring engine implemented symmetrically in client-side JavaScript (for instantaneous UI feedback) and server-side Python (for authoritative database evaluation):
+PawPatrol incorporates a responsible, multi-tier AI pipeline:
+
+### A. Supported Capabilities
+- **Animal Species Detection:** Identifies Dog, Cat, Cattle, Bird with confidence percentages (e.g. `Dog (97.5% confidence)`).
+- **Scene & Attribute Detection:** Identifies outdoor environments, street context, postures.
+- **Uncertainty & Species Conflict Detection:** If an image is blurry, dark, low-contrast, or if multiple species are detected, flags `uncertainty_flag = True`.
+- **Human-in-the-Loop Review:** The user reviews AI predictions before submission, with a 1-click button to correct or confirm animal type.
+
+### B. Clinical Reality & Disclaimers
+General-purpose computer vision detects visual objects and species; it is **NOT** a substitute for clinical veterinary diagnosis. It cannot diagnose internal trauma, rabies, or viral infections. Custom fine-grained models (e.g., Amazon Rekognition Custom Labels) require trained datasets of verified animal injury images.
+
+### C. Triage Safeguard
+The rule-based triage matrix is strictly authoritative. **AI uncertainty or low confidence can NEVER downgrade an urgent emergency.**
+
+---
+
+## 3. Rule-Based Triage Matrix
 
 | Triage Tier | Score Threshold | Key Clinical Indicators | SLA Target | Automated Action |
 | :--- | :--- | :--- | :--- | :--- |
-| 🚨 **CRITICAL** | Score &ge; 12 | Unconscious / unresponsive, heavy arterial bleeding, hit-and-run impact with severe trauma | &lt; 30 mins | Immediate SNS email/SMS alert to emergency veterinary response teams |
+| 🚨 **CRITICAL** | Score &ge; 12 | Unconscious / unresponsive, heavy arterial bleeding, hit-and-run impact with severe trauma | &lt; 30 mins | Immediate SNS email dispatch to emergency veterinary squads |
 | ⚠️ **HIGH** | Score 7 – 11 | Suspected limb fracture, rabies/neurological symptoms, trapped starving infant animals | &lt; 2 hours | Priority volunteer queue notification |
 | 🩹 **MEDIUM** | Score 4 – 6 | Severe skin disease/mange, animal trapped in non-life-threatening ditch, open sores | &lt; 12 hours | Routine volunteer assessment visit |
 | ✅ **LOW** | Score 1 – 3 | Healthy stray roaming safely, ABC (Animal Birth Control / Sterilization) request | &lt; 48 hours | Scheduled clinic checkup |
 
 ---
 
-## 3. Project Directory Structure
+## 4. Project Directory Structure
 
 ```
 PawPatrol/
@@ -66,114 +85,54 @@ PawPatrol/
 ├── frontend/                    # Single-Page Web Application
 │   ├── index.html               # Main application portal (Form, Dashboard, Map, SOPs)
 │   ├── css/
-│   │   └── style.css            # Responsive, emergency-themed modern CSS
+│   │   └── style.css            # Responsive, emergency-ready modern CSS
 │   └── js/
-│       ├── app.js               # UI controller, live risk scoring, dashboard logic
-│       ├── api.js               # Unified API client (Local server, AWS Cloud, Offline cache)
+│       ├── app.js               # UI controller, live risk scoring, AI card integration
+│       ├── api.js               # Unified API client (Cloud, Local Server, Explicit Offline)
 │       └── map.js               # Leaflet OpenStreetMap interactive pin & markers
 ├── backend/                     # Serverless & Local Backend Services
 │   ├── lambda_function.py       # Production AWS Lambda handler (Python 3.14 x86_64)
-│   ├── local_server.py          # Zero-dependency Windows local test server
-│   ├── requirements.txt         # boto3 dependencies
-│   └── test_backend.py          # Automated unit & integration tests
+│   ├── ai_service.py            # AI Computer Vision service (Rekognition + Local Validator)
+│   ├── local_server.py          # Windows local development server (http://localhost:8000)
+│   ├── test_backend.py          # Comprehensive test suite (27 tests passing)
+│   └── requirements.txt         # Dependencies (boto3, pillow)
 ├── aws/                         # AWS Infrastructure & Deployment Assets
 │   ├── dynamodb_schema.json     # Table definition (Pay-Per-Request Free Tier)
-│   ├── lambda_policy.json       # Least-privilege IAM policy
+│   ├── lambda_policy.json       # Least-privilege IAM policy (DynamoDB, S3, SNS, Rekognition)
 │   ├── deploy_guide.md          # Step-by-step console and CLI deployment guide
 │   └── mcp_setup.md             # AWS MCP Server configuration for Windows
 └── data/                        # Local data directory for local server persistence
 ```
 
----
 
 
-## 5. API Reference
 
-### 1. `GET /reports` (or `/api/reports`)
-Retrieves all rescue reports with optional query filters.
 
-**Query Parameters:**
-- `risk_level` (`CRITICAL` | `HIGH` | `MEDIUM` | `LOW`)
-- `status` (`REPORTED` | `DISPATCHED` | `IN_TREATMENT` | `RESCUED` | `CLOSED`)
-- `animal_type` (`Dog` | `Cat` | `Cattle` | `Bird` | `Other`)
+## 5. Local Quickstart (Windows & PowerShell)
 
-**Response:**
-```json
-{
-  "success": true,
-  "count": 4,
-  "reports": [
-    {
-      "report_id": "PAW-20261020-9E61C",
-      "created_at": "2026-10-20T17:44:48Z",
-      "updated_at": "2026-10-20T17:44:48Z",
-      "status": "REPORTED",
-      "animal_type": "Dog",
-      "condition": "CRITICAL_INJURY",
-      "risk_level": "CRITICAL",
-      "risk_score": 19,
-      "location_address": "Sector 18 Metro Gate 1, Noida",
-      "latitude": 28.5700,
-      "longitude": 77.3200
-    }
-  ]
-}
+### Step 1: Run Automated Test Suite
+```powershell
+python backend\test_backend.py
 ```
+*Actual result: `Ran 27 tests in 0.085s ... OK` (verifying triage parity, AI photo analysis, Lambda handlers, S3 presigned URLs, and error resilience).*
 
-### 2. `POST /reports`
-Submits a new rescue incident report.
-
-**Request Body:**
-```json
-{
-  "animal_type": "Dog",
-  "animal_age": "adult",
-  "condition": "CRITICAL_INJURY",
-  "symptoms": ["hit_by_vehicle", "bleeding_heavily"],
-  "is_trapped": false,
-  "description": "Puppy hit by vehicle, bleeding from hind leg.",
-  "location_address": "Near Central Market Gate 2",
-  "latitude": 28.6219,
-  "longitude": 77.2150,
-  "reporter_name": "Aarav Sharma",
-  "reporter_phone": "+91 9811022334"
-}
+### Step 2: Start Local Development Server
+```powershell
+python backend\local_server.py
 ```
-
-### 3. `PATCH /reports/{report_id}`
-Updates case management status.
-
-**Request Body:**
-```json
-{
-  "status": "DISPATCHED"
-}
-```
-
-### 4. `POST /upload-url`
-Generates a pre-signed S3 PUT URL for secure, direct client-to-S3 photo upload.
+*Open in your browser: `http://localhost:8000/`*
 
 ---
 
-## 6. AWS Cloud Deployment Summary
-
-Please see [`aws/deploy_guide.md`](file:///C:/Users/stuti/.gemini/antigravity/scratch/PawPatrol/aws/deploy_guide.md) for the complete button-by-button AWS Console walkthrough.
-
-1. **DynamoDB:** Create table `PawPatrol-Reports` with Partition Key `report_id` (String) and On-Demand billing.
-2. **S3:** Create private bucket `pawpatrol-photos-<id>` with CORS enabled for direct PUT uploads.
-3. **SNS:** Create Standard Topic `PawPatrol-Alerts` and subscribe your emergency email.
-4. **Lambda:** Deploy `backend/lambda_function.py` with runtime `Python 3.14` on `x86_64` and enable Lambda Function URL with CORS.
-5. **Connect:** Click the gear icon (⚙️) on the frontend web page and paste your Lambda Function URL.
-
----
-
-## 7. Security & Free Tier Compliance
+## 6. Security & Free Tier Compliance
 
 - **Zero Root Credential Risk:** No AWS passwords or root credentials are used or stored.
-- **No Hardcoded Secrets:** AWS authentication is handled via IAM roles and standard credential profiles.
-- **Private S3 Bucket:** Photos are uploaded and accessed via time-limited Pre-signed URLs without opening the bucket to public writes.
+- **Private S3 Storage:** Photos are stored privately; browser upload and view use short-lived Pre-signed URLs (15 minutes). No public bucket access.
+- **No Base64 Bloat:** DynamoDB stores lightweight image S3 keys and metadata rather than megabytes of base64 strings.
+- **Reporter Privacy:** Public list endpoints mask citizen phone numbers (e.g. `+91****210`).
 - **100% Free Tier Eligible:**
   - DynamoDB: On-Demand (Free within 25 GB limit).
   - Lambda: 1 Million free invocations per month.
   - S3: 5 GB free tier storage.
-  - SNS: 1 Million free mobile/API publishes per month.
+  - SNS: 1,000 free email dispatches per month.
+  - Rekognition: 5,000 free analyzed images per month.

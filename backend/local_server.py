@@ -2,22 +2,43 @@
 PawPatrol Local Development & Testing Server
 Runs on standard Python 3.14 without requiring external dependencies or AWS credentials.
 Serves frontend static assets at http://localhost:8000/ and handles REST API routes.
+Supports local photo uploads, AI photo analysis, and persistent JSON storage.
 """
 
 import os
+import sys
 import json
 import time
 import uuid
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+import base64
 import urllib.parse
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+
+# Ensure UTF-8 console output on Windows
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 PORT = 8000
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
-DATA_FILE = os.path.join(BASE_DIR, 'data', 'local_reports.json')
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+DATA_FILE = os.path.join(DATA_DIR, 'local_reports.json')
+UPLOADS_DIR = os.path.join(DATA_DIR, 'uploads')
+
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+# Import AI service
+try:
+    from ai_service import analyze_animal_photo, validate_image_bytes, DISCLAIMER_TEXT
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from ai_service import analyze_animal_photo, validate_image_bytes, DISCLAIMER_TEXT
 
 def seed_sample_reports():
-    """Seeds realistic sample reports if the data file is empty or does not exist."""
+    """Seeds realistic sample reports with AI metadata and triage scores."""
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
@@ -45,10 +66,23 @@ def seed_sample_reports():
             "reporter_name": "Aarav Sharma",
             "reporter_phone": "+91 9811022334",
             "risk_level": "CRITICAL",
-            "risk_score": 10,
-            "risk_reasons": ["Severe/Life-threatening condition selected", "Hit-and-run / vehicular trauma", "Active heavy bleeding", "Suspected bone fracture"],
+            "risk_score": 19,
+            "risk_reasons": ["Severe trauma / life-threatening injury", "Active heavy bleeding", "Hit-by-vehicle trauma", "Suspected fractured limb"],
             "photo_url": None,
-            "photo_data": None
+            "photo_s3_key": None,
+            "ai_analysis": {
+                "status": "SUCCESS",
+                "model_name": "AWS-Rekognition-DetectLabels-v2",
+                "identified_species": "Dog",
+                "species_confidence": 98.4,
+                "uncertainty_flag": False,
+                "detected_labels": [
+                    {"label": "Dog", "confidence": 98.4, "category": "Species"},
+                    {"label": "Canine", "confidence": 98.4, "category": "AnimalFeature"}
+                ],
+                "clinical_disclaimer": DISCLAIMER_TEXT
+            },
+            "storage_tier": "LOCAL_SERVER"
         },
         {
             "report_id": "PAW-20261020-B202",
@@ -67,10 +101,23 @@ def seed_sample_reports():
             "reporter_name": "Priya Sen",
             "reporter_phone": "+91 9711554433",
             "risk_level": "HIGH",
-            "risk_score": 7,
-            "risk_reasons": ["Trapped in dangerous hazard", "Vulnerable infant animal", "Severe malnutrition"],
+            "risk_score": 11,
+            "risk_reasons": ["Moderate injury or acute illness", "Severe malnutrition / dehydration", "Trapped in dangerous hazard", "Infant animal vulnerability"],
             "photo_url": None,
-            "photo_data": None
+            "photo_s3_key": None,
+            "ai_analysis": {
+                "status": "SUCCESS",
+                "model_name": "AWS-Rekognition-DetectLabels-v2",
+                "identified_species": "Cat",
+                "species_confidence": 95.1,
+                "uncertainty_flag": False,
+                "detected_labels": [
+                    {"label": "Cat", "confidence": 95.1, "category": "Species"},
+                    {"label": "Kitten", "confidence": 92.0, "category": "AnimalFeature"}
+                ],
+                "clinical_disclaimer": DISCLAIMER_TEXT
+            },
+            "storage_tier": "LOCAL_SERVER"
         },
         {
             "report_id": "PAW-20261020-C303",
@@ -89,10 +136,12 @@ def seed_sample_reports():
             "reporter_name": "Ramesh Kumar",
             "reporter_phone": "+91 9988776655",
             "risk_level": "MEDIUM",
-            "risk_score": 3,
-            "risk_reasons": ["Skin condition or infection"],
+            "risk_score": 4,
+            "risk_reasons": ["Skin condition or chronic illness", "Severe skin mange"],
             "photo_url": None,
-            "photo_data": None
+            "photo_s3_key": None,
+            "ai_analysis": None,
+            "storage_tier": "LOCAL_SERVER"
         }
     ]
 
@@ -188,6 +237,28 @@ class PawPatrolHandler(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
+        # Serve uploaded files from data/uploads
+        if path.startswith('/uploads/'):
+            filename = os.path.basename(path)
+            file_path = os.path.join(UPLOADS_DIR, filename)
+            if os.path.exists(file_path):
+                self.send_response(200)
+                if filename.endswith('.png'):
+                    self.send_header('Content-Type', 'image/png')
+                elif filename.endswith('.webp'):
+                    self.send_header('Content-Type', 'image/webp')
+                else:
+                    self.send_header('Content-Type', 'image/jpeg')
+                self._send_cors_headers()
+                self.end_headers()
+                with open(file_path, 'rb') as f:
+                    self.wfile.write(f.read())
+                return
+            else:
+                self.send_response(404)
+                self.end_headers()
+                return
+
         if path == '/api/reports' or path == '/reports':
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -242,7 +313,86 @@ class PawPatrolHandler(SimpleHTTPRequestHandler):
         except Exception:
             data = {}
 
-        if path == '/api/reports' or path == '/reports':
+        # 1. AI Photo Analysis Endpoint
+        if path == '/api/analyze-photo' or path == '/analyze-photo':
+            image_b64 = data.get('image_base64')
+            if not image_b64:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Missing required field: image_base64'}).encode('utf-8'))
+                return
+
+            if ',' in image_b64:
+                image_b64 = image_b64.split(',', 1)[1]
+
+            try:
+                image_bytes = base64.b64decode(image_b64)
+            except Exception:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Invalid base64 payload'}).encode('utf-8'))
+                return
+
+            analysis = analyze_animal_photo(image_bytes)
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'success': True, 'analysis': analysis}).encode('utf-8'))
+            return
+
+        # 2. Local Photo Upload Endpoint (Replaces base64 in database)
+        elif path == '/api/upload':
+            filename = data.get('filename', f"{uuid.uuid4().hex}.jpg")
+            image_b64 = data.get('image_base64')
+
+            if not image_b64:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Missing image_base64'}).encode('utf-8'))
+                return
+
+            if ',' in image_b64:
+                image_b64 = image_b64.split(',', 1)[1]
+
+            try:
+                image_bytes = base64.b64decode(image_b64)
+                file_ext = os.path.splitext(filename)[1] or '.jpg'
+                saved_filename = f"{uuid.uuid4().hex}{file_ext}"
+                file_path = os.path.join(UPLOADS_DIR, saved_filename)
+                with open(file_path, 'wb') as f:
+                    f.write(image_bytes)
+
+                public_url = f"http://localhost:{PORT}/uploads/{saved_filename}"
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    'success': True,
+                    'photo_url': public_url,
+                    'photo_s3_key': f"uploads/{saved_filename}",
+                    'size_bytes': len(image_bytes)
+                }).encode('utf-8'))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': f"Upload failed: {str(e)}"}).encode('utf-8'))
+                return
+
+        # 3. Create Rescue Report
+        elif path == '/api/reports' or path == '/reports':
             animal_type = data.get('animal_type')
             address = data.get('location_address')
             desc = data.get('description')
@@ -261,6 +411,15 @@ class PawPatrolHandler(SimpleHTTPRequestHandler):
             animal_age = data.get('animal_age', 'adult')
 
             risk_level, score, reasons = calculate_risk(condition, symptoms, is_trapped, animal_age)
+
+            ai_analysis = data.get('ai_analysis')
+            species_mismatch = False
+            if ai_analysis and isinstance(ai_analysis, dict):
+                ai_species = ai_analysis.get('identified_species')
+                ai_conf = ai_analysis.get('species_confidence', 0.0)
+                if ai_species and ai_conf >= 80.0 and ai_species.lower() != str(animal_type).lower():
+                    species_mismatch = True
+                    reasons.append(f"AI Observation: Identified as {ai_species} ({ai_conf}% conf)")
 
             date_str = time.strftime('%Y%m%d')
             rand_str = uuid.uuid4().hex[:5].upper()
@@ -286,8 +445,11 @@ class PawPatrolHandler(SimpleHTTPRequestHandler):
                 'risk_level': risk_level,
                 'risk_score': score,
                 'risk_reasons': reasons,
-                'photo_data': data.get('photo_data'),
-                'photo_url': data.get('photo_url')
+                'species_mismatch': species_mismatch,
+                'photo_url': data.get('photo_url'),
+                'photo_s3_key': data.get('photo_s3_key'),
+                'ai_analysis': ai_analysis,
+                'storage_tier': 'LOCAL_SERVER'
             }
 
             reports = load_reports()
@@ -302,17 +464,15 @@ class PawPatrolHandler(SimpleHTTPRequestHandler):
             return
 
         elif path == '/api/upload-url' or path == '/upload-url':
-            # Local mock for S3 pre-signed upload URL
             filename = data.get('filename', 'upload.jpg')
-            mock_url = f"http://localhost:{PORT}/api/mock-upload"
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self._send_cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps({
-                'upload_url': mock_url,
-                'photo_url': f"http://localhost:{PORT}/assets/{filename}",
-                'key': f"uploads/{filename}"
+                'upload_url': f"http://localhost:{PORT}/api/upload",
+                'key': f"uploads/{filename}",
+                'expires_in': 900
             }).encode('utf-8'))
             return
 
@@ -365,13 +525,6 @@ class PawPatrolHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
 def run():
-    import sys
-    if hasattr(sys.stdout, 'reconfigure'):
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-        except Exception:
-            pass
-
     seed_sample_reports()
     server_address = ('', PORT)
     httpd = ThreadingHTTPServer(server_address, PawPatrolHandler)
@@ -379,6 +532,7 @@ def run():
     print("[PawPatrol] Local Development Server Running!")
     print(f">> Open in your web browser: http://localhost:{PORT}/")
     print(f">> REST API Endpoint:        http://localhost:{PORT}/api/reports")
+    print(f">> AI Photo Analysis:       http://localhost:{PORT}/api/analyze-photo")
     print("Press Ctrl+C to stop the server.")
     print("=" * 65)
     try:
